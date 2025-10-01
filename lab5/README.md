@@ -4,6 +4,8 @@ Totally. For Online Boutique + HPA, the cleanest way to **see replica counts in 
 * a UI: **Kubernetes Dashboard**, **Lens**, or **k9s** (TUI)
 * production-grade: **Grafana** (with Prometheus + kube-state-metrics) showing HPA + replica metrics live
 
+## Make sure you have a Kubernetes Cluster deployed
+
 Below is an end-to-end recipe you can paste in, including Online Boutique deploy, HPA, and a Grafana dashboard that tracks “function” (service) replica counts in real time.
 
 ## TL;DR – What to use to “visualize the real-time number of functions”
@@ -154,7 +156,8 @@ kubectl -n monitoring rollout status statefulset/kps-prometheus-kube-prometheus-
 Port-forward Grafana and get the admin password:
 
 ```bash
-kubectl -n monitoring port-forward svc/kps-grafana 3000:80
+# forward local TCP 3000 on public IP (128.X.X.X) → Service kps-grafana:3000
+kubectl -n monitoring port-forward --address=128.X.X.X svc/kps-grafana 3000:80
 kubectl -n monitoring get secret kps-grafana -o jsonpath="{.data.admin-password}" | base64 -d; echo
 # Open http://127.0.0.1:3000  (user: admin, pass: above)
 ```
@@ -166,12 +169,12 @@ In Grafana, add panels with these **PromQL** queries (real-time “function”/s
   * *Current*:
 
     ```
-    kube_hpa_status_current_replicas{namespace="boutique"}
+    kube_horizontalpodautoscaler_status_current_replicas{namespace="boutique"}
     ```
   * *Desired*:
 
     ```
-    kube_hpa_status_desired_replicas{namespace="boutique"}
+    kube_horizontalpodautoscaler_status_current_replicas{namespace="boutique"}
     ```
 
   > Use a “Time series” panel with legend `{{hpa}}` (name your HPAs to match deployments).
@@ -201,7 +204,36 @@ This gives you live charts showing when autoscaler bumps replica counts and how 
 
 ---
 
-# 4) Optional: KEDA (event-driven autoscaling)
+# 4) Increase traffic load
+
+Download the `kubernetes-manifests` of Online Boutique workload.
+
+```bash
+wget https://raw.githubusercontent.com/GoogleCloudPlatform/microservices-demo/main/release/kubernetes-manifests.yaml
+```
+
+Update the number of users and spawn rate in `loadgenerator`.
+```bash
+vim kubernetes-manifests.yaml
+
+# Go to the Deployment of loadgenerator, find its env definition
+
+# (LINE#743) Change the value of "USERS" to 1000
+# (LINE#745) Change the value of "RATE" to 100
+
+# Save and exit kubernetes-manifests.yaml
+```
+
+Reapply the `kubernetes-manifests` of Online Boutique workload.
+```bash
+kubectl apply -n boutique -f https://raw.githubusercontent.com/GoogleCloudPlatform/microservices-demo/main/release/kubernetes-manifests.yaml
+```
+
+> Now you can observe the number of frentend pods in Grafana.
+
+---
+
+<!-- # 4) Optional: KEDA (event-driven autoscaling)
 
 If you plan to scale on Kafka/Redis/HTTP QPS rather than CPU:
 
@@ -214,4 +246,4 @@ helm upgrade --install keda kedacore/keda -n keda
 
 KEDA exposes metrics you can chart in Grafana similar to HPA metrics.
 
----
+--- -->
