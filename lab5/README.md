@@ -224,9 +224,9 @@ vim kubernetes-manifests.yaml
 # Save and exit kubernetes-manifests.yaml
 ```
 
-Reapply the `kubernetes-manifests` of Online Boutique workload.
+Reapply the modified `kubernetes-manifests` of Online Boutique workload.
 ```bash
-kubectl apply -n boutique -f https://raw.githubusercontent.com/GoogleCloudPlatform/microservices-demo/main/release/kubernetes-manifests.yaml
+kubectl apply -n boutique -f kubernetes-manifests.yaml
 ```
 
 > Now you can observe the number of frentend pods in Grafana.
