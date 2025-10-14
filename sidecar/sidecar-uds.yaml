@@ -1,0 +1,121 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-app-uds-conf
+data:
+  nginx.conf: |
+    worker_processes auto;
+    events { worker_connections 4096; }
+    http {
+      access_log /dev/stdout;
+      error_log  /dev/stderr warn;
+
+      # App serves HTTP on a Unix socket shared via emptyDir
+      server {
+        listen unix:/var/run/app/app.sock;
+        location / {
+          default_type text/plain;
+          return 200 "ok\n";
+        }
+      }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-sidecar-uds-conf
+data:
+  nginx.conf: |
+    worker_processes auto;
+    events { worker_connections 4096; }
+    http {
+      access_log /dev/stdout;
+      error_log  /dev/stderr warn;
+
+      # Public listener exposed via Service
+      server {
+        listen 0.0.0.0:8080;
+
+        # Proxy to the app via UDS
+        location / {
+          proxy_set_header Host $host;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          # NOTE: trailing colon is required by nginx syntax for UDS
+          proxy_pass http://unix:/var/run/app/app.sock:;
+        }
+      }
+
+      # Sidecar self health
+      server {
+        listen 0.0.0.0:9090;
+        location = /healthz { return 200 "ok\n"; }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-sidecar-uds
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: nginx-sidecar-uds } }
+  template:
+    metadata:
+      labels: { app: nginx-sidecar-uds }
+    spec:
+      # Ensure shared volume is group-writable for both containers
+      securityContext:
+        fsGroup: 2000
+      volumes:
+      - name: run
+        emptyDir: {}
+      - name: app-conf
+        configMap: { name: nginx-app-uds-conf }
+      - name: sidecar-conf
+        configMap: { name: nginx-sidecar-uds-conf }
+      containers:
+      - name: app
+        image: nginx:1.27-alpine
+        command: ["nginx"]
+        args: ["-g", "daemon off;", "-c", "/etc/nginx/nginx.conf"]
+        volumeMounts:
+        - name: app-conf
+          mountPath: /etc/nginx
+        - name: run
+          mountPath: /var/run/app
+        resources:
+          requests: { cpu: "100m", memory: "64Mi" }
+          limits:   { cpu: "2",    memory: "256Mi" }
+
+      - name: sidecar
+        image: nginx:1.27-alpine
+        command: ["nginx"]
+        args: ["-g", "daemon off;", "-c", "/etc/nginx/nginx.conf"]
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: health
+          containerPort: 9090
+        volumeMounts:
+        - name: sidecar-conf
+          mountPath: /etc/nginx
+        - name: run
+          mountPath: /var/run/app
+        readinessProbe:
+          httpGet: { port: 9090, path: /healthz }
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          requests: { cpu: "100m", memory: "64Mi" }
+          limits:   { cpu: "1",    memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-sidecar-uds-svc
+spec:
+  selector: { app: nginx-sidecar-uds }
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
